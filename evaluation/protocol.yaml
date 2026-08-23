@@ -1,0 +1,57 @@
+protocol_version: 1
+purpose: "Aligned mesh evaluation using ICON's official metric definitions"
+
+dataset:
+  benchmark: cape
+  license_required: true
+  status: not_ready
+  note: "Do not report CAPE numbers until official GT scans and metadata exist."
+
+coordinate_contract:
+  prediction_and_gt_same_frame: true
+  automatic_icp_alignment: false
+  automatic_rescaling: false
+  rationale: "Automatic alignment can hide pose, scale, and camera failures."
+
+surface_sampling:
+  num_samples: 1000
+  random_seed: 42
+  sampling: "PyTorch3D sample_points_from_meshes"
+
+metrics:
+  p2s:
+    implementation: "lib.dataset.Evaluator.point_mesh_distance"
+    direction: "ground_truth_samples_to_prediction_surface"
+    unit: cm
+    lower_is_better: true
+  chamfer:
+    implementation: "mean of two official directional point-to-surface distances"
+    unit: cm
+    lower_is_better: true
+  normal_error:
+    implementation: "lib.dataset.Evaluator.calculate_normal_consist"
+    views: [0, 1, 2, 3]
+    unit: dimensionless_squared_error
+    lower_is_better: true
+
+required_record:
+  - sample_id
+  - method
+  - pred_path
+  - gt_path
+  - pred_sha256
+  - gt_sha256
+  - git_commit
+  - num_samples
+  - random_seed
+  - device
+  - chamfer_cm
+  - p2s_cm
+  - normal_error
+  - runtime_seconds
+
+official_model_configs:
+  - configs/train/pifu.yaml
+  - configs/train/pamir.yaml
+  - configs/train/icon-nofilter.yaml
+  - configs/train/icon-filter.yaml
