@@ -77,7 +77,35 @@ without normal error must be marked incomplete.
 
 The generic pair evaluator above is not a replacement for ICON's dataset-aware
 test path. Once the licensed CAPE files and official checkpoints are present,
-use the repository's official route:
+first run a bounded pilot rather than immediately spending GPU time on all 450
+subject-view pairs:
+
+```bash
+python -m evaluation.run_cape_pilot --dry-run
+
+python -m evaluation.run_cape_pilot \
+  --subject-indices 0 50 \
+  --rotations 0 \
+  --mcube-res 256 \
+  2>&1 | tee ../run-record/cape-pilot-two-subjects.log
+```
+
+The defaults select the first official CAPE easy subject and the first hard
+subject. One zero-degree view is reconstructed for each. The pilot writes:
+
+- per-case predicted and ground-truth meshes;
+- intermediate and normal-comparison images;
+- P2S, Chamfer, and normal error from the official evaluator;
+- runtime and peak CUDA memory;
+- checkpoint/config hashes and machine-readable CSV/JSON records.
+
+The pilot calls the official dataset, checkpoint loader, ICON ``test_step``,
+reconstruction engine, and Evaluator. It bypasses only ``test_epoch_end``
+because that function unconditionally indexes all 150 subjects x 3 rotations
+and therefore cannot aggregate a two-subject subset.
+
+After the pilot establishes runtime, memory, and correctness, use the full
+repository route only when its expected cost is accepted:
 
 ```bash
 python -m apps.train -cfg ./configs/train/icon-filter.yaml -test
