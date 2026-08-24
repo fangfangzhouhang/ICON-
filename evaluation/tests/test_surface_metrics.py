@@ -20,7 +20,11 @@ class SurfaceMetricBehaviorTest(unittest.TestCase):
         cls.torch = torch
         cls.Meshes = Meshes
         cls.Pointclouds = Pointclouds
-        cls.sample_points_from_meshes = sample_points_from_meshes
+        # Keep the imported function unbound. Without ``staticmethod``, Python
+        # injects the unittest instance as the first argument when accessed as
+        # ``self.sample_points_from_meshes(...)``; PyTorch3D then receives the
+        # test case instead of a ``Meshes`` object.
+        cls.sample_points_from_meshes = staticmethod(sample_points_from_meshes)
         cls.point_mesh_distance = staticmethod(point_mesh_distance)
         cls.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 

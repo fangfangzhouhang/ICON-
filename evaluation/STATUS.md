@@ -1,6 +1,6 @@
 # Evaluation status
 
-Updated: 2026-08-23
+Updated: 2026-08-24
 
 ## Confirmed
 
@@ -14,8 +14,9 @@ Updated: 2026-08-23
 
 ## Not yet confirmed
 
-- The three PyTorch3D metric behavior tests have not run on AutoDL yet. The
-  local Windows environment does not contain the verified ICON PyTorch3D stack.
+- The first AutoDL run reached all three PyTorch3D tests, but the test wrapper
+  incorrectly bound `sample_points_from_meshes` as an instance method. Commit
+  after `84e46fc` fixes that harness bug; all three tests still require a rerun.
 - CAPE terms have not been accepted and CAPE ground-truth data are absent.
 - No CAPE Chamfer, P2S, or normal-error value has been produced.
 - No valid trained-feature ablation has been run.
