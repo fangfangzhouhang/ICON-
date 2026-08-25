@@ -104,6 +104,20 @@ reconstruction engine, and Evaluator. It bypasses only ``test_epoch_end``
 because that function unconditionally indexes all 150 subjects x 3 rotations
 and therefore cannot aggregate a two-subject subset.
 
+Summarize any pilot or larger smoke benchmark without rerunning inference:
+
+```bash
+python -m evaluation.summarize_cape \
+  --input evaluation/outputs/cape-smoke-30/pilot_summary.csv
+```
+
+The default output directory is an ``analysis`` folder beside the input CSV.
+It contains machine-readable JSON, a long-form statistics CSV, and a Markdown
+report. Statistics are reported overall and by CAPE group and rotation. The
+first successful case is excluded from the separate steady-state runtime and
+memory summary because CUDA lazy initialization can inflate it. Failures remain
+part of the success-rate denominator and are never silently discarded.
+
 After the pilot establishes runtime, memory, and correctness, use the full
 repository route only when its expected cost is accepted:
 
