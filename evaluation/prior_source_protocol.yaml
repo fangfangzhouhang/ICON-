@@ -1,0 +1,146 @@
+protocol_version: 1
+experiment_id: cape-prior-source-paired-comparison
+title: "CAPE prepared prior versus image-estimated PIXIE prior"
+
+research_question: >-
+  On the same CAPE render, how much reconstruction quality is lost when ICON
+  must estimate its initial parametric body from the image instead of receiving
+  the CAPE-prepared SMPL prior?
+
+claim_boundary:
+  paper_table_replication: false
+  reason: >-
+    The image-estimated condition uses apps.infer preprocessing, PIXIE/SMPL-X,
+    body-feedback optimization, and output coordinates that differ from the
+    official CAPE network benchmark. It is an end-to-end extension experiment.
+
+paired_sample_contract:
+  manifest: data/cape/test.txt
+  subjects: 150
+  rotations: [0, 120, 240]
+  expected_cases_per_condition: 450
+  input_image_source: data/cape_3views/<subject>/render/<rotation>.png
+  ground_truth_mesh_source: data/cape/scans/<subject>.obj
+  same_subject_and_rotation_across_conditions: true
+
+fixed_controls:
+  checkpoint: data/ckpt/icon-filter.ckpt
+  normal_checkpoint: data/ckpt/normal.ckpt
+  mcube_res: 256
+  surface_samples: 1000
+  automatic_icp_alignment: false
+  automatic_rescaling: false
+  evaluator:
+    chamfer: lib.dataset.Evaluator.point_mesh_distance
+    p2s: lib.dataset.Evaluator.point_mesh_distance
+    normal_error: lib.dataset.Evaluator.calculate_normal_consist
+
+conditions:
+  cape_prepared_prior:
+    scientific_role: "standardized-prior reconstruction benchmark"
+    entry_point: python -m apps.train -cfg ./configs/train/icon-filter.yaml -test
+    image_source: CAPE rendered image
+    prior_source: data/cape/smpl/<subject>.npz
+    body_model: SMPL
+    body_feedback_optimization: false
+    interpretation: >-
+      Measures the reconstruction network when a dataset-prepared, already
+      aligned body prior is available. It does not measure HPS/PIXIE errors.
+
+  pixie_estimated_prior:
+    scientific_role: "end-to-end single-image reconstruction"
+    entry_point: planned evaluation.run_cape_end_to_end
+    upstream_reference_entry: python -m apps.infer
+    image_source: the identical CAPE rendered image
+    prior_source: PIXIE estimate from the image
+    body_model: SMPL-X
+    body_feedback_optimization: true
+    interpretation: >-
+      Measures the complete user-facing route: image preprocessing, foreground
+      segmentation, PIXIE estimation, ICON feedback, and reconstruction.
+    coordinate_adapter_required: true
+
+  pixie_estimated_prior_no_feedback:
+    enabled_by_default: false
+    scientific_role: "mechanism intervention, not a trained-model ablation"
+    entry_point: planned evaluation.run_cape_end_to_end
+    image_source: the identical CAPE rendered image
+    prior_source: PIXIE estimate from the image
+    body_model: SMPL-X
+    body_feedback_optimization: false
+    interpretation: >-
+      Paired against pixie_estimated_prior, this estimates the effect of ICON's
+      inference-time feedback. It must not be presented as a retrained ablation.
+
+coordinate_contract:
+  required_before_metrics:
+    - preserve the CAPE camera calibration and render rotation
+    - record crop, resize, weak-perspective scale, and translation
+    - map predicted vertices back to the CAPE metric frame
+    - verify the mapped SMPL-X prior against the CAPE image silhouette
+    - pass identity, scale, translation, and rotation synthetic tests
+  forbidden_shortcuts:
+    - hidden ICP alignment
+    - per-case best-fit scale
+    - selecting the best rotation after seeing ground truth
+  diagnostic_outputs:
+    - raw apps.infer mesh
+    - mapped prediction mesh
+    - CAPE ground-truth mesh
+    - image and predicted-prior silhouette overlay
+    - front and back normal comparison
+    - transformation record in JSON
+
+metrics:
+  primary:
+    - chamfer_cm
+    - p2s_cm
+    - normal_error
+    - success_rate
+  system:
+    - runtime_seconds
+    - peak_memory_allocated_gib
+    - peak_memory_reserved_gib
+  prior_diagnostics:
+    - silhouette_iou
+    - prior_to_gt_chamfer_cm
+    - prior_joint_reprojection_error_px
+  topology:
+    - watertight
+    - winding_consistent
+    - connected_component_count
+
+analysis:
+  paired_difference: >-
+    For every subject and rotation, subtract the prepared-prior score from the
+    PIXIE-prior score before aggregating. Report mean, median, P90, bootstrap
+    confidence interval, and the proportion of cases that become worse.
+  stratify_by:
+    - CAPE easy versus hard group
+    - rotation
+    - pose family
+    - clothing type when metadata is available
+  causal_warning: >-
+    The prepared-prior and PIXIE-prior routes differ in prior source, body model,
+    preprocessing, and feedback. The full difference is an end-to-end gap, not
+    a pure PIXIE-only causal effect. The no-feedback condition narrows one part
+    of this gap but does not remove every route difference.
+
+execution_gates:
+  - name: two_case_coordinate_gate
+    cases: 2
+    pass_when: >-
+      Both mapped predictions visually overlap the CAPE body, synthetic mapping
+      tests pass, metrics are finite, and no hidden alignment is used.
+  - name: thirty_case_failure_gate
+    cases: 30
+    pass_when: >-
+      At least 29 cases complete, worst cases have been inspected, and paired
+      metric differences agree with the visible failures.
+  - name: full_paired_benchmark
+    cases: 450
+    pass_when: >-
+      Every condition uses the same manifest and evaluator contract; failures
+      remain in the denominator; all code, config, checkpoint, and transform
+      hashes are recorded.
+

@@ -3,6 +3,13 @@
 This directory adds an auditable evaluation layer without changing ICON's
 network, checkpoints, inference entry point, or licensed assets.
 
+For the paired experiment that compares CAPE-prepared SMPL against a body prior
+estimated from the same image by PIXIE, read
+[`PRIOR_SOURCE_EXPERIMENT.zh-CN.md`](PRIOR_SOURCE_EXPERIMENT.zh-CN.md) and the
+machine-readable contract in [`prior_source_protocol.yaml`](prior_source_protocol.yaml).
+That experiment is an end-to-end extension, not a replacement for the official
+CAPE network benchmark.
+
 ## Research question before code
 
 An experiment is only interpretable when these six items are fixed:

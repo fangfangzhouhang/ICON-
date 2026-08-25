@@ -4,8 +4,10 @@ purpose: "Aligned mesh evaluation using ICON's official metric definitions"
 dataset:
   benchmark: cape
   license_required: true
-  status: not_ready
-  note: "Do not report CAPE numbers until official GT scans and metadata exist."
+  status: prepared_on_autodl
+  note: >-
+    The licensed 150-subject CAPE test subset, scans, SMPL parameters, and three
+    rendered views were audited on AutoDL. Do not redistribute licensed assets.
 
 coordinate_contract:
   prediction_and_gt_same_frame: true
