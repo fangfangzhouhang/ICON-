@@ -118,6 +118,33 @@ first successful case is excluded from the separate steady-state runtime and
 memory summary because CUDA lazy initialization can inflate it. Failures remain
 part of the success-rate denominator and are never silently discarded.
 
+## Resumable full CAPE run
+
+Use a separate output directory for the complete 150-subject x 3-rotation
+evaluation. ``--resume`` reuses a case only when all four evidence artifacts
+are non-empty and its subject, rotation, resolution, seed, device, config hash,
+and checkpoint hashes match the requested run. Failed, incomplete, corrupted,
+or mismatched cases are recomputed. The case CSV and JSON summary are rewritten
+after every case, so a later run can recover after an interrupted process.
+
+```bash
+SUBJECTS=$(seq 0 149)
+
+python -m evaluation.run_cape_pilot \
+  --subject-indices $SUBJECTS \
+  --rotations 0 120 240 \
+  --mcube-res 256 \
+  --output-dir evaluation/outputs/cape-full-450 \
+  --resume
+```
+
+Each newly started execution session marks its first computed case as affected
+by CUDA warm-up. ``evaluation.summarize_cape`` excludes every such marked case
+from steady-state runtime and memory statistics. Geometry metrics are never
+excluded for warm-up. The runner also records vertex/face counts, extents,
+watertightness, winding consistency, component count, and a topology warning
+for every predicted mesh.
+
 After the pilot establishes runtime, memory, and correctness, use the full
 repository route only when its expected cost is accepted:
 

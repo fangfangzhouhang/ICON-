@@ -70,6 +70,56 @@ class CapeSummaryTest(unittest.TestCase):
             payload = json.loads((output / "benchmark_summary.json").read_text(encoding="utf-8"))
             self.assertEqual(payload["failure_count"], 1)
 
+    def test_explicit_warmup_markers_cover_resumed_sessions(self):
+        rows = [
+            {
+                "status": "ok",
+                "subject": "a",
+                "group": "easy",
+                "rotation": 0,
+                "warmup_affected": "True",
+                "runtime_seconds": 10.0,
+                "chamfer_cm": 1.0,
+                "p2s_cm": 1.0,
+                "normal_error": 0.1,
+                "peak_memory_allocated_gib": 8.0,
+                "peak_memory_reserved_gib": 10.0,
+            },
+            {
+                "status": "ok",
+                "subject": "b",
+                "group": "hard",
+                "rotation": 0,
+                "warmup_affected": "True",
+                "runtime_seconds": 20.0,
+                "chamfer_cm": 1.0,
+                "p2s_cm": 1.0,
+                "normal_error": 0.1,
+                "peak_memory_allocated_gib": 8.0,
+                "peak_memory_reserved_gib": 10.0,
+            },
+            {
+                "status": "ok",
+                "subject": "c",
+                "group": "hard",
+                "rotation": 120,
+                "warmup_affected": "False",
+                "runtime_seconds": 3.0,
+                "chamfer_cm": 1.0,
+                "p2s_cm": 1.0,
+                "normal_error": 0.1,
+                "peak_memory_allocated_gib": 3.0,
+                "peak_memory_reserved_gib": 4.0,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "source.csv"
+            source.write_text("fixture", encoding="utf-8")
+            summary = build_summary(rows, source)
+        steady = summary["steady_state_system_metrics"]
+        self.assertEqual(len(steady["excluded_cases"]), 2)
+        self.assertEqual(steady["statistics"]["runtime_seconds"]["mean"], 3.0)
+
 
 if __name__ == "__main__":
     unittest.main()

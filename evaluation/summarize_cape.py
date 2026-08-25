@@ -65,6 +65,12 @@ def optional_float(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
 def percentile(values: Sequence[float], fraction: float) -> float | None:
     """Return a linearly interpolated percentile for a non-empty sequence."""
     if not values:
@@ -173,7 +179,21 @@ def extremes(
 def build_summary(rows: Sequence[Mapping[str, Any]], input_path: Path) -> Dict[str, Any]:
     successful = [row for row in rows if str(row.get("status")).lower() == "ok"]
     failed = [row for row in rows if str(row.get("status")).lower() != "ok"]
-    steady_state = successful[1:] if len(successful) > 1 else []
+    has_explicit_warmup = any(
+        str(row.get("warmup_affected", "")).strip() for row in successful
+    )
+    if has_explicit_warmup:
+        warmup_cases = [row for row in successful if truthy(row.get("warmup_affected"))]
+        steady_state = [row for row in successful if not truthy(row.get("warmup_affected"))]
+    else:
+        warmup_cases = successful[:1]
+        steady_state = successful[1:] if len(successful) > 1 else []
+    topology_warnings = [
+        row
+        for row in successful
+        if str(row.get("mesh_topology_ok", "")).strip()
+        and not truthy(row.get("mesh_topology_ok"))
+    ]
 
     by_group = {
         label: metric_block(items)
@@ -195,6 +215,7 @@ def build_summary(rows: Sequence[Mapping[str, Any]], input_path: Path) -> Dict[s
         "success_count": len(successful),
         "failure_count": len(failed),
         "success_rate": len(successful) / len(rows),
+        "topology_warning_count": len(topology_warnings),
         "unique_subject_count": len({row.get("subject") for row in rows}),
         "rotations": sorted(
             {row.get("rotation") for row in rows if row.get("rotation") is not None}
@@ -210,10 +231,10 @@ def build_summary(rows: Sequence[Mapping[str, Any]], input_path: Path) -> Dict[s
         "by_group_rotation": by_group_rotation,
         "steady_state_system_metrics": {
             "note": (
-                "The first successful case is excluded because CUDA lazy initialization "
-                "and allocator warm-up can inflate runtime and peak memory."
+                "Every case marked warmup_affected is excluded because CUDA lazy "
+                "initialization and allocator warm-up can inflate runtime and peak memory."
             ),
-            "excluded_case": case_identity(successful[0]) if successful else None,
+            "excluded_cases": [case_identity(row) for row in warmup_cases],
             "statistics": {
                 metric: describe(
                     row[metric]
@@ -234,6 +255,7 @@ def build_summary(rows: Sequence[Mapping[str, Any]], input_path: Path) -> Dict[s
             }
             for row in failed
         ],
+        "topology_warnings": [case_identity(row) for row in topology_warnings],
     }
 
 
@@ -278,6 +300,7 @@ def markdown_report(summary: Mapping[str, Any]) -> str:
         f"- Rotations: **{', '.join(map(str, summary['rotations']))}**",
         f"- Successes: **{summary['success_count']}**",
         f"- Failures: **{summary['failure_count']}**",
+        f"- Mesh topology warnings: **{summary['topology_warning_count']}**",
         f"- Success rate: **{summary['success_rate'] * 100:.2f}%**",
         "",
         "## Overall quality metrics",

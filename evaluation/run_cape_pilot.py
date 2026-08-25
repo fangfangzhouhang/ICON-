@@ -1,4 +1,4 @@
-"""Run a bounded, auditable ICON pilot on two CAPE subjects.
+"""Run a bounded or complete, auditable ICON evaluation on CAPE.
 
 The official benchmark assumes all 150 subjects and three rotations are
 present when it aggregates results.  This entry point deliberately bypasses
@@ -20,6 +20,10 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping
+from uuid import uuid4
+
+
+RUNNER_SCHEMA_VERSION = 2
 
 
 def sha256_file(path: Path) -> str:
@@ -94,8 +98,8 @@ def write_csv(path: Path, records: Iterable[Dict[str, Any]]) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run ICON-filter on a bounded CAPE pilot: subject 0 from the "
-            "official easy split and subject 50 from the hard split."
+            "Run ICON-filter on a bounded subset or the complete 150-subject "
+            "x 3-rotation CAPE evaluation."
         )
     )
     parser.add_argument(
@@ -126,6 +130,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=1993)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Reuse cases whose metrics, artifacts, parameters, and checkpoint "
+            "hashes match this run. Failed or incomplete cases are recomputed."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Validate config, checkpoints, subjects, and indices without inference.",
@@ -147,6 +159,124 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError(
                 f"CAPE subject index must be in [0, 149], got {subject_index}"
             )
+
+
+def case_key(case: Mapping[str, Any]) -> tuple[int, int]:
+    return int(case["subject_index"]), int(case["rotation"])
+
+
+def case_directory(output_dir: Path, case: Mapping[str, Any]) -> Path:
+    return (
+        output_dir
+        / str(case["group"])
+        / str(case["subject"])
+        / f"rotation-{int(case['rotation']):03d}"
+    )
+
+
+def artifact_paths(case_dir: Path) -> Dict[str, Path]:
+    return {
+        "prediction_mesh": case_dir / "mesh_src.obj",
+        "ground_truth_mesh": case_dir / "mesh_tgt.obj",
+        "intermediate_image": case_dir / "intermediate.png",
+        "normal_comparison_image": case_dir / "normal_comparison.png",
+    }
+
+
+def load_resumable_record(
+    output_dir: Path,
+    case: Mapping[str, Any],
+    expected: Mapping[str, Any],
+) -> Dict[str, Any] | None:
+    """Return a validated successful record or None when recomputation is safer."""
+    case_dir = case_directory(output_dir, case)
+    metrics_path = case_dir / "metrics.json"
+    if not metrics_path.is_file():
+        return None
+    try:
+        with metrics_path.open("r", encoding="utf-8") as stream:
+            record = json.load(stream)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if record.get("status") != "ok":
+        return None
+    comparisons = {
+        "subject_index": int(case["subject_index"]),
+        "subject": str(case["subject"]),
+        "rotation": int(case["rotation"]),
+        **expected,
+    }
+    for key, value in comparisons.items():
+        if record.get(key) != value:
+            return None
+    current_artifacts = artifact_paths(case_dir)
+    if any(not path.is_file() or path.stat().st_size <= 0 for path in current_artifacts.values()):
+        return None
+    record.update({f"{name}_path": str(path) for name, path in current_artifacts.items()})
+    return record
+
+
+def audit_prediction_mesh(path: Path) -> Dict[str, Any]:
+    """Record topology evidence without treating an imperfect prediction as missing."""
+    import trimesh
+
+    mesh = trimesh.load(str(path), force="mesh", process=False)
+    extents = [float(value) for value in mesh.extents]
+    body_count = int(mesh.body_count)
+    watertight = bool(mesh.is_watertight)
+    winding_consistent = bool(mesh.is_winding_consistent)
+    return {
+        "mesh_vertex_count": int(len(mesh.vertices)),
+        "mesh_face_count": int(len(mesh.faces)),
+        "mesh_watertight": watertight,
+        "mesh_winding_consistent": winding_consistent,
+        "mesh_body_count": body_count,
+        "mesh_extents": extents,
+        "mesh_topology_ok": watertight and winding_consistent and body_count == 1,
+    }
+
+
+def ordered_records(
+    selected_cases: Iterable[Mapping[str, Any]],
+    records_by_key: Mapping[tuple[int, int], Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    return [
+        records_by_key[case_key(case)]
+        for case in selected_cases
+        if case_key(case) in records_by_key
+    ]
+
+
+def write_run_summary(
+    output_dir: Path,
+    selected_cases: List[Dict[str, Any]],
+    records_by_key: Mapping[tuple[int, int], Dict[str, Any]],
+    repo_root: Path,
+    complete: bool,
+) -> Dict[str, Any]:
+    records = ordered_records(selected_cases, records_by_key)
+    failures = sum(record.get("status") != "ok" for record in records)
+    topology_warnings = sum(
+        record.get("status") == "ok" and record.get("mesh_topology_ok") is False
+        for record in records
+    )
+    summary = {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "git_commit": git_commit(repo_root),
+        "complete": complete,
+        "selected_case_count": len(selected_cases),
+        "case_count": len(records),
+        "success_count": len(records) - failures,
+        "failure_count": failures,
+        "pending_count": len(selected_cases) - len(records),
+        "topology_warning_count": topology_warnings,
+        "records": records,
+    }
+    write_csv(output_dir / "pilot_summary.csv", records)
+    with (output_dir / "pilot_summary.json").open("w", encoding="utf-8") as stream:
+        json.dump(summary, stream, ensure_ascii=False, indent=2)
+        stream.write("\n")
+    return summary
 
 
 def main() -> int:
@@ -257,6 +387,8 @@ def main() -> int:
     }
     selection_record = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "runner_schema_version": RUNNER_SCHEMA_VERSION,
+        "resume_requested": args.resume,
         "git_commit": git_commit(repo_root),
         "git_status_short": git_status(repo_root),
         "config": str(config_path),
@@ -278,6 +410,48 @@ def main() -> int:
         print("DRY_RUN_OK: no model inference was executed")
         return 0
 
+    checkpoint_hashes = {
+        "config_sha256": sha256_file(config_path),
+        "checkpoint_sha256": sha256_file(checkpoint_path),
+        "normal_checkpoint_sha256": sha256_file(normal_path),
+    }
+    resume_contract = {
+        "runner_schema_version": RUNNER_SCHEMA_VERSION,
+        "method": cfg.name,
+        "mcube_res": args.mcube_res,
+        "seed": args.seed,
+        "device": args.device,
+        **checkpoint_hashes,
+    }
+    execution_session_id = (
+        datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        + "-"
+        + uuid4().hex[:8]
+    )
+    records_by_key: Dict[tuple[int, int], Dict[str, Any]] = {}
+    if args.resume:
+        for case in selected_cases:
+            cached = load_resumable_record(output_dir, case, resume_contract)
+            if cached is not None:
+                cached["resume_reused"] = True
+                cached["resume_reused_at_utc"] = datetime.now(timezone.utc).isoformat()
+                records_by_key[case_key(case)] = cached
+        print(
+            f"RESUME_SCAN reusable={len(records_by_key)} "
+            f"recompute={len(selected_cases) - len(records_by_key)}"
+        )
+
+    cases_to_compute = [
+        case for case in selected_cases if case_key(case) not in records_by_key
+    ]
+    if not cases_to_compute:
+        summary = write_run_summary(
+            output_dir, selected_cases, records_by_key, repo_root, complete=True
+        )
+        print("RESUME_COMPLETE: every selected case was already valid")
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return 0
+
     device = torch.device(args.device)
     model_started = time.perf_counter()
     model = ICON(cfg)
@@ -294,21 +468,16 @@ def main() -> int:
     torch.cuda.synchronize(device)
     model_load_seconds = time.perf_counter() - model_started
 
-    checkpoint_hashes = {
-        "config_sha256": sha256_file(config_path),
-        "checkpoint_sha256": sha256_file(checkpoint_path),
-        "normal_checkpoint_sha256": sha256_file(normal_path),
-    }
-
-    records: List[Dict[str, Any]] = []
-    failures = 0
+    session_has_success = False
     for case_number, case in enumerate(selected_cases, start=1):
-        case_dir = (
-            output_dir
-            / case["group"]
-            / case["subject"]
-            / f"rotation-{case['rotation']:03d}"
-        )
+        if case_key(case) in records_by_key:
+            print(
+                f"PILOT_CASE_SKIPPED {case_number}/{len(selected_cases)} "
+                f"subject={case['subject']} rotation={case['rotation']}"
+            )
+            continue
+
+        case_dir = case_directory(output_dir, case)
         case_dir.mkdir(parents=True, exist_ok=True)
         print(
             f"PILOT_CASE {case_number}/{len(selected_cases)} "
@@ -331,6 +500,10 @@ def main() -> int:
             "torch_cuda_version": environment_record["torch_cuda_version"],
             "gpu_name": environment_record["gpu_name"],
             "model_load_seconds": model_load_seconds,
+            "execution_session_id": execution_session_id,
+            "resume_reused": False,
+            "warmup_affected": None,
+            "runner_schema_version": RUNNER_SCHEMA_VERSION,
             "status": "failed",
             "chamfer_cm": None,
             "p2s_cm": None,
@@ -365,14 +538,11 @@ def main() -> int:
                 if source.is_file():
                     shutil.copy2(str(source), str(case_dir / target_name))
 
-            artifact_paths = {
-                "prediction_mesh": case_dir / "mesh_src.obj",
-                "ground_truth_mesh": case_dir / "mesh_tgt.obj",
-                "intermediate_image": case_dir / "intermediate.png",
-                "normal_comparison_image": case_dir / "normal_comparison.png",
-            }
+            current_artifacts = artifact_paths(case_dir)
             missing_artifacts = {
-                name: path for name, path in artifact_paths.items() if not path.is_file()
+                name: path
+                for name, path in current_artifacts.items()
+                if not path.is_file() or path.stat().st_size <= 0
             }
             if missing_artifacts:
                 details = ", ".join(
@@ -385,6 +555,7 @@ def main() -> int:
             record.update(
                 {
                     "status": "ok",
+                    "warmup_affected": not session_has_success,
                     "chamfer_cm": as_float(metrics["chamfer"]),
                     "p2s_cm": as_float(metrics["p2s"]),
                     "normal_error": as_float(metrics["NC"]),
@@ -397,37 +568,36 @@ def main() -> int:
                     ),
                     **{
                         f"{name}_path": str(path)
-                        for name, path in artifact_paths.items()
+                        for name, path in current_artifacts.items()
                     },
+                    **audit_prediction_mesh(current_artifacts["prediction_mesh"]),
                 }
             )
+            stale_traceback = case_dir / "traceback.txt"
+            if stale_traceback.is_file():
+                stale_traceback.unlink()
         except Exception as exc:  # Keep evidence for both pilot cases.
-            failures += 1
             record["error_type"] = type(exc).__name__
             record["error_message"] = str(exc)
             with (case_dir / "traceback.txt").open("w", encoding="utf-8") as stream:
                 traceback.print_exc(file=stream)
             print(f"PILOT_CASE_FAILED: {type(exc).__name__}: {exc}")
 
-        records.append(record)
+        if record["status"] == "ok":
+            session_has_success = True
+        records_by_key[case_key(case)] = record
         with (case_dir / "metrics.json").open("w", encoding="utf-8") as stream:
             json.dump(record, stream, ensure_ascii=False, indent=2)
             stream.write("\n")
-        write_csv(output_dir / "pilot_summary.csv", records)
+        write_run_summary(
+            output_dir, selected_cases, records_by_key, repo_root, complete=False
+        )
 
-    summary = {
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "git_commit": git_commit(repo_root),
-        "case_count": len(records),
-        "success_count": len(records) - failures,
-        "failure_count": failures,
-        "records": records,
-    }
-    with (output_dir / "pilot_summary.json").open("w", encoding="utf-8") as stream:
-        json.dump(summary, stream, ensure_ascii=False, indent=2)
-        stream.write("\n")
+    summary = write_run_summary(
+        output_dir, selected_cases, records_by_key, repo_root, complete=True
+    )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
-    return 0 if failures == 0 else 1
+    return 0 if summary["failure_count"] == 0 and summary["pending_count"] == 0 else 1
 
 
 if __name__ == "__main__":
