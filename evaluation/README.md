@@ -159,6 +159,25 @@ repository route only when its expected cost is accepted:
 python -m apps.train -cfg ./configs/train/icon-filter.yaml -test
 ```
 
+When both the official full run and the auditable 450-case run are complete,
+calibrate the two execution routes before treating the custom runner as a
+research instrument:
+
+```bash
+python -m evaluation.compare_official_parity \
+  --official-npy /root/autodl-tmp/icon-repro/ICON/results/icon-filter/cape/test_results.npy \
+  --custom-csv /root/autodl-tmp/icon-repro/ICON-eval-7763b6c/evaluation/outputs/cape-full-450/pilot_summary.csv \
+  --output-dir evaluation/outputs/official-parity
+```
+
+The audit checks the complete 150-subject x 3-rotation contract and compares
+the six official easy/hard aggregates with arithmetic means reconstructed from
+the case CSV. It writes JSON, CSV, and Markdown evidence. ``PASS`` means the two
+routes agree within declared engineering tolerances; ``WARN`` means the inputs
+are complete but at least one aggregate needs investigation; ``FAIL`` means the
+official keys or the complete case contract are missing. These tolerances are
+debugging thresholds, not confidence intervals or new paper metrics.
+
 Run the PIFu, PaMIR, ICON-no-filter, and ICON-filter configurations with the
 same CAPE subset and the same effective Marching Cubes resolution. Record
 failures, runtime, and peak GPU memory in addition to the three geometry
