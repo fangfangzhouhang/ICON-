@@ -1,6 +1,6 @@
 # Evaluation status
 
-Updated: 2026-08-25
+Updated: 2026-08-26
 
 ## Confirmed
 
@@ -21,23 +21,35 @@ Updated: 2026-08-25
 - The resumable ICON-filter CAPE run completed 450/450 cases with zero recorded
   inference failures. Its report is descriptive for this checkout and must not
   yet be labelled a paper-table reproduction.
-- The next experiment is a paired prior-source comparison: CAPE-prepared SMPL
+- The one-time official `apps.train -test` aggregate and the custom 450-case
+  evaluator agree within the declared engineering tolerances for easy/hard
+  Chamfer, P2S, and normal error. This validates the measurement pipeline; it
+  does not by itself reproduce the paper table.
+- The paired prior-source experiment is implemented locally: CAPE-prepared SMPL
   versus PIXIE-estimated SMPL-X from the identical rendered image. Its contract
-  is `evaluation/prior_source_protocol.yaml`.
+  is `evaluation/prior_source_protocol.yaml`, its runner is
+  `evaluation/run_prior_source_ab.py`, and its analysis entry point is
+  `evaluation/summarize_prior_source_ab.py`.
+- The coordinate adapter follows the real `apps.infer` preprocessing chain
+  (original image -> 1024 square -> person crop) and has regression tests for
+  centred and off-centre CAPE inputs.
 
 ## Not yet confirmed
 
-- Why the current 450-case descriptive scores differ substantially from the
-  published ICON table. The official `apps.train -test` parity run is the
-  one-time runner/aggregation calibration for this question.
-- The coordinate mapping from the `apps.infer` PIXIE/SMPL-X frame back to the
-  CAPE metric frame. No end-to-end PIXIE-prior metric is valid until this mapping
-  passes the two-case coordinate gate.
+- Why this checkout's descriptive 450-case scores should not be quoted as the
+  published ICON table without matching every remaining paper protocol detail
+  and every baseline under the same evaluation contract.
+- The coordinate mapping has unit-test coverage but has not yet passed the
+  required two-case visual and numerical gate on AutoDL. Therefore no
+  end-to-end conclusion about PIXIE versus prepared CAPE priors is valid yet.
+- No 30-case paired prior-source pilot or 450-case paired prior-source run has
+  been executed.
 - No valid trained-feature ablation has been run.
 
 ## Current blocker and next gate
 
-Finish the one-time official runner parity audit, then implement and test the
-coordinate adapter for the paired prior-source experiment. Run only one easy
-and one hard image through `apps.infer` until the mapped prediction, estimated
-SMPL-X, image silhouette, and CAPE ground truth visibly share the same frame.
+Run only one easy and one hard image through the new paired runner. Inspect the
+mapped PIXIE-route reconstruction, estimated SMPL-X, image silhouette, and CAPE
+ground truth before accepting any number. If both cases share the same frame and
+the run records contain no stale artifacts, expand first to a balanced 30-case
+pilot. Do not launch the 450-case paired run before that gate passes.

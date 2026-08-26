@@ -49,7 +49,7 @@ conditions:
 
   pixie_estimated_prior:
     scientific_role: "end-to-end single-image reconstruction"
-    entry_point: planned evaluation.run_cape_end_to_end
+    entry_point: python -m evaluation.run_prior_source_ab
     upstream_reference_entry: python -m apps.infer
     image_source: the identical CAPE rendered image
     prior_source: PIXIE estimate from the image
@@ -63,7 +63,7 @@ conditions:
   pixie_estimated_prior_no_feedback:
     enabled_by_default: false
     scientific_role: "mechanism intervention, not a trained-model ablation"
-    entry_point: planned evaluation.run_cape_end_to_end
+    entry_point: not_implemented
     image_source: the identical CAPE rendered image
     prior_source: PIXIE estimate from the image
     body_model: SMPL-X
@@ -143,4 +143,3 @@ execution_gates:
       Every condition uses the same manifest and evaluator contract; failures
       remain in the denominator; all code, config, checkpoint, and transform
       hashes are recorded.
-

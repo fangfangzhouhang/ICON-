@@ -181,6 +181,7 @@ class TestDataset():
 
             data_dict = {
                 'name': img_name,
+                'source_image_path': os.path.abspath(img_path),
                 'image': img_icon.to(self.device).unsqueeze(0),
                 'ori_image': img_ori,
                 'mask': img_mask,
@@ -197,6 +198,7 @@ class TestDataset():
             )
             data_dict = {
                 'name': img_name,
+                'source_image_path': os.path.abspath(img_path),
                 'image': img_icon.to(self.device).unsqueeze(0),
                 'ori_image': img_ori,
                 'mask': img_mask,

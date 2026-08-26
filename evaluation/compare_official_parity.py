@@ -10,8 +10,10 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import io
 import json
 import math
+from contextlib import contextmanager
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -85,10 +87,38 @@ def scalar(value: Any, label: str) -> float:
     return result
 
 
+@contextmanager
+def cpu_portable_torch_pickle():
+    """Map CUDA torch storages embedded in numpy object files onto the CPU.
+
+    ICON's official ``test_results.npy`` may contain torch scalar tensors saved
+    from a CUDA process.  NumPy delegates those objects back to ``torch.load``
+    while unpickling, which otherwise fails on a CPU-only analysis machine.
+    """
+
+    try:
+        import torch
+    except ImportError:
+        yield
+        return
+
+    original = torch.storage._load_from_bytes
+
+    def load_from_bytes(payload: bytes):
+        return torch.load(io.BytesIO(payload), map_location="cpu")
+
+    torch.storage._load_from_bytes = load_from_bytes
+    try:
+        yield
+    finally:
+        torch.storage._load_from_bytes = original
+
+
 def load_official(path: Path) -> Dict[str, float]:
     if not path.is_file():
         raise FileNotFoundError(f"Official test_results.npy does not exist: {path}")
-    payload = np.load(path, allow_pickle=True)
+    with cpu_portable_torch_pickle():
+        payload = np.load(path, allow_pickle=True)
     if isinstance(payload, np.ndarray) and payload.shape == ():
         payload = payload.item()
     if not isinstance(payload, Mapping):

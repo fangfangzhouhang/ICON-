@@ -16,6 +16,7 @@
 
 import warnings
 import logging
+import json
 
 warnings.filterwarnings("ignore")
 logging.getLogger("lightning").setLevel(logging.ERROR)
@@ -46,6 +47,30 @@ import pickle
 import numpy as np
 import torch
 
+from evaluation.coordinate_adapter import (
+    build_crop_ndc_to_image_ndc,
+    serialise_uncrop_param,
+)
+
+
+def _portable_value(value):
+    """Convert tensor/numpy metadata into JSON-safe, CPU-only values."""
+    if hasattr(value, "detach"):
+        value = value.detach()
+    if hasattr(value, "cpu"):
+        value = value.cpu()
+    if hasattr(value, "numpy"):
+        value = value.numpy()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, (list, tuple)):
+        return [_portable_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _portable_value(item) for key, item in value.items()}
+    return value
+
 torch.backends.cudnn.benchmark = True
 
 if __name__ == "__main__":
@@ -61,6 +86,15 @@ if __name__ == "__main__":
     parser.add_argument("-loop_cloth", "--loop_cloth", type=int, default=200)
     parser.add_argument("-hps_type", "--hps_type", type=str, default="pixie")
     parser.add_argument("-export_video", action="store_true")
+    parser.add_argument(
+        "-stop_after_recon",
+        "--stop-after-recon",
+        action="store_true",
+        help=(
+            "Export the core reconstruction and coordinate trace, then skip "
+            "remeshing, cloth refinement, and video rendering."
+        ),
+    )
     parser.add_argument("-in_dir", "--in_dir", type=str, default="./examples")
     parser.add_argument("-out_dir", "--out_dir", type=str, default="./results")
     parser.add_argument('-seg_dir', '--seg_dir', type=str, default=None)
@@ -391,8 +425,40 @@ if __name__ == "__main__":
             verts_pr, faces_pr, _ = model.test_single(in_tensor)
 
         recon_obj = trimesh.Trimesh(verts_pr, faces_pr, process=False, maintains_order=True)
-        recon_obj.export(os.path.join(args.out_dir, cfg.name, f"obj/{data['name']}_recon.obj"))
-        
+        object_dir = os.path.join(args.out_dir, cfg.name, "obj")
+        recon_path = os.path.join(object_dir, f"{data['name']}_recon.obj")
+        recon_obj.export(recon_path)
+
+        # Auditable coordinate trace for external evaluation.  This records
+        # preprocessing and HPS metadata only; it does not alter inference.
+        coordinate_transform = build_crop_ndc_to_image_ndc(data["uncrop_param"])
+        trace = {
+            "schema_version": 1,
+            "sample_name": data["name"],
+            "source_image_path": data.get("source_image_path", ""),
+            "hps_type": dataset_param["hps_type"],
+            "mesh_path": os.path.abspath(recon_path),
+            "mesh_frame": "person_crop_ndc_y_up",
+            "image_shape": list(data["ori_image"].shape),
+            "uncrop_param": serialise_uncrop_param(data["uncrop_param"]),
+            "crop_ndc_to_image_ndc": coordinate_transform.to_json(),
+            "hps_body_scale": _portable_value(data["scale"]),
+            "hps_translation": _portable_value(optimed_trans),
+            "loop_smpl": int(args.loop_smpl),
+            "loop_cloth": int(args.loop_cloth),
+            "config": os.path.abspath(args.config),
+            "mcube_res": int(getattr(cfg, "mcube_res", 256)),
+        }
+        with open(
+            os.path.join(object_dir, f"{data['name']}_trace.json"),
+            "w",
+            encoding="utf-8",
+        ) as stream:
+            json.dump(trace, stream, indent=2, ensure_ascii=False)
+
+        if args.stop_after_recon:
+            continue
+
         # Isotropic Explicit Remeshing for better geometry topology
         verts_refine, faces_refine = remesh(
             recon_obj, os.path.join(args.out_dir, cfg.name, f"obj/{data['name']}_remesh.obj"),

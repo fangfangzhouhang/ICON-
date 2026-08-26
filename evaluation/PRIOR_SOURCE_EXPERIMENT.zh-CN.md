@@ -1,118 +1,133 @@
-# ICON 人体先验来源对照实验
+# ICON 身体先验来源 A/B 实验
 
-## 1. 这项实验真正要回答什么
+## 1. 这次实验到底在问什么
 
-同一张 CAPE 人体图像可以走两条路线：
+同一张 CAPE 人体图、同一个 ICON 权重、同一份真实三维网格，比较两条路线：
 
-1. **CAPE 准备好的先验路线**：直接读取与该样本对齐的 SMPL 参数，再让
-   ICON 重建衣服表面；
-2. **图片估计路线**：只给人物图像，由 PIXIE 先估计 SMPL-X，ICON 再用
-   法向和轮廓反馈修正人体，最后重建衣服表面。
+1. **Prepared 路线**：直接使用 CAPE 已准备并对齐好的 SMPL 身体先验；
+2. **PIXIE 路线**：只把图像交给官方 `apps.infer`，由 PIXIE 从图像估计 SMPL-X，
+   再完成 ICON 的身体反馈和隐式重建。
 
-我们要测的不是“哪段代码更官方”，而是：
+三项几何指标都越低越好。每一例计算：
 
-> 当测试时不再提供数据集准备好的对齐人体，而必须从图片估计人体时，
-> 最终三维重建会损失多少精度，损失主要发生在哪些姿态和服装上？
+`差值 = PIXIE 路线 - Prepared 路线`
 
-这是比单纯重复一次 450 例更有解释力的实验，因为它把实际用户使用时
-必经的“人体估计”环节纳入了测量。
+差值为正，表示在这一例上，从图像估计身体先验的端到端路线更差；差值为负，
+表示它更好。必须先逐例做差，再汇总，不能只比较两组平均数。
 
-## 2. 必须先纠正一句容易误解的话
+## 2. 它能说明什么，不能说明什么
 
-“不给 ICON 设定好的 SMPL”可以理解为“不把 CAPE 的 SMPL 参数直接喂给
-模型”，但不能理解为“ICON 完全不使用人体先验”。ICON 的核心设计就是
-依赖参数化人体先验。`apps.infer` 只是把先验的来源从数据集文件改成了
-PIXIE/其他 HPS 对图片的估计。
+它能测量“标准化、已对齐身体先验”和“真实单图使用场景”之间的端到端性能差距。
 
-所以准确的实验名称是：
+它**不是**纯粹只改变 PIXIE 的因果消融，因为两条路线还同时存在这些差异：
 
-- **CAPE-prepared prior**：数据集准备的、已对齐的 SMPL；
-- **PIXIE-estimated prior**：根据图片估计并经过反馈优化的 SMPL-X。
+- Prepared 路线使用 SMPL，PIXIE 路线使用 SMPL-X；
+- 两条路线的图像裁剪和身体反馈路径不同；
+- Prepared 路线已经获得数据集准备好的对齐信息。
 
-## 3. 现在三个入口分别在做什么
+因此汇报时应称为“先验来源的端到端 A/B 扩展实验”，不能称为“证明 PIXIE
+造成了全部误差”，也不能冒充论文表格复现。
 
-### A. `evaluation.run_cape_pilot`
+## 3. 公平性怎么保证
 
-这是我们写的“实验记录员”。它复用官方 CAPE 数据读取、官方 ICON
-checkpoint、官方 `ICON.test_step` 和官方指标，只增加断点续跑、逐例 CSV、
-哈希、耗时、显存、网格拓扑以及失败记录。
+- 同一个 subject、rotation 和 CAPE 渲染图；
+- 同一个 ICON 与 normal checkpoint；
+- 同一个 Marching Cubes 分辨率；
+- 同一个真实 CAPE Mesh；
+- 同一个指标实现、表面采样数和逐例随机种子；
+- 不运行 ICP、不做质心对齐、不做逐例最佳缩放；
+- PIXIE 输出必须根据真实裁剪记录映射回完整图像坐标，并保存变换矩阵。
 
-它的意义是让实验可审计、可恢复，不是发明一个新模型。
+`apps.infer --stop-after-recon` 只跳过与本实验无关的重网格、衣服细化和视频导出。
+它不改变网络、权重、SMPL 反馈优化或核心 `_recon.obj`。
 
-### B. `apps.train ... -test`
+## 4. 为什么先跑 2 例
 
-这是官方 CAPE 网络评测入口。它同样读取 `data/cape/smpl/<subject>.npz`，
-所以不是“只给图片”的路线。它通过 Lightning 一次遍历官方 150 个样本和
-三个旋转，最后按官方方式汇总。
+2 例不是为了得出性能结论，而是验证实验尺子没有问题：
 
-当前正在运行它，是为了做一次**仪器校准**：我们的 450 例结果明显好于
-论文表格，因此要确认差异究竟来自入口/聚合、版本、数据处理还是论文
-协议。它与前面的运行在模型计算上高度重复，但在“排除我们的评测外壳
-改变官方行为”这一点上不重复。完整校准一次后不应反复运行。
+- 一例来自 easy，一例来自 hard；
+- 两条路线都要生成 Mesh；
+- 映射后的 PIXIE Mesh 要与 CAPE 人体在同一位置和尺度；
+- 三项指标必须是有限数值；
+- 两组 normal comparison 要和肉眼观察一致；
+- `paired_summary.csv` 必须保留失败样本，不能只留下成功样本。
 
-### C. `apps.infer`
+只有这个坐标门通过，才扩展到 30 例。30 例用于发现失败模式；完整 450 例才用于
+稳定统计。若 2 例就发生尺度或方向错误，扩大到 450 例只会批量制造错误数字。
 
-这是普通人物照片入口。它执行图像裁剪与分割、PIXIE/HPS 人体估计、
-SMPL-X 反馈优化、法向预测、隐式重建和网格细化。这才对应“只把图片交给
-ICON，让程序自己估计人体”的实际使用场景。
+## 5. AutoDL 分步命令
 
-它的输出不能立刻拿来和 CAPE 真值算距离，因为裁剪、弱透视相机、缩放、
-平移、坐标轴方向和人体模型都发生了变化。如果不把预测网格严格映射回
-CAPE 的米制坐标系，Chamfer/P2S 测到的主要是坐标差，而不是模型差。
+以下命令假设评测 worktree、原始 ICON 数据和现有 450 例结果仍位于之前的路径。
 
-## 4. 为什么不能只保留图片估计路线
+```bash
+source /root/miniconda3/etc/profile.d/conda.sh
+conda activate icon
+cd /root/autodl-tmp/icon-repro/ICON-eval-7763b6c
+```
 
-两条路线回答不同问题：
+先检查入口和权重，不运行模型：
 
-- CAPE 准备先验：在“人体结构已经对齐”的条件下，衣服重建网络有多准？
-- PIXIE 图片先验：真实端到端使用时，整条系统有多准？
+```bash
+python -m evaluation.run_prior_source_ab --help
+```
 
-二者的逐例差值近似表示“从理想化研究条件走向真实使用条件”的代价。
-如果只测图片估计路线，失败时无法判断是 PIXIE 姿态错、相机尺度错、反馈
-没修好，还是隐式表面网络本身错；如果只测准备先验路线，又会高估真实
-照片上的能力。
+准备两张确定的 CAPE 输入图：
 
-## 5. 下一版评测器必须增加什么
+```bash
+python -m evaluation.run_prior_source_ab \
+  --mode prepare \
+  --subject-indices 0 50 \
+  --rotations 0 \
+  --output-dir evaluation/outputs/prior-source-ab-gate
+```
 
-### 5.1 坐标适配器
+让官方单图入口用 PIXIE 估计身体先验并生成核心 Mesh：
 
-逐例记录并反算：原图尺寸、裁剪框、512 像素缩放、弱透视相机 scale、
-二维平移、CAPE 相机标定和当前旋转。预测网格必须先回到 CAPE 坐标系，
-再计算距离。
+```bash
+python -m evaluation.run_prior_source_ab \
+  --mode infer \
+  --subject-indices 0 50 \
+  --rotations 0 \
+  --output-dir evaluation/outputs/prior-source-ab-gate
+```
 
-禁止静默使用 ICP 或逐例最佳缩放，因为它们会把人体估计和相机估计的
-错误“修掉”，导致端到端结果虚高。如果要研究 ICP，只能作为名称明确的
-附加敏感性分析单独报告。
+这一阶段的详细输出写入文件，当前终端只显示开始和完成提示。若想看实时进度，
+请在**另一个终端**执行：
 
-### 5.2 人体先验诊断指标
+```bash
+tail -f evaluation/outputs/prior-source-ab-gate/pixie-inference.log
+```
 
-除了最终 Mesh 的 Chamfer、P2S、法向误差，还要测：
+查看结束后按 `Ctrl+C` 只会退出日志查看，不会停止第一个终端里的模型运行。
 
-- 估计人体轮廓与图片 mask 的 IoU；
-- PIXIE 人体先验到 CAPE 真值表面的距离；
-- 可获得关节时，关节重投影像素误差。
+把两条路线与相同真值比较：
 
-这样才能把一个失败定位为“先验先错了”还是“先验基本正确但衣服重建
-错了”。
+```bash
+python -m evaluation.run_prior_source_ab \
+  --mode evaluate \
+  --subject-indices 0 50 \
+  --rotations 0 \
+  --output-dir evaluation/outputs/prior-source-ab-gate
+```
 
-### 5.3 三个执行闸门
+最后汇总成报告：
 
-1. **2 例坐标闸门**：一易一难，人工确认网格、轮廓和坐标重合；
-2. **30 例失败闸门**：确认最差样本的数字与肉眼错误一致；
-3. **450 例正式对照**：同一 150 人、同三视角、同指标、逐例配对统计。
+```bash
+python -m evaluation.summarize_prior_source_ab \
+  --input-csv evaluation/outputs/prior-source-ab-gate/paired_summary.csv \
+  --output-dir evaluation/outputs/prior-source-ab-gate/analysis
+```
 
-任何闸门失败都先修协议，不继续烧算力。
+## 6. 两例门的人工验收
 
-## 6. 最终能形成什么科研结论
+每例至少检查：
 
-最终表格不是简单写两行均值，而是回答：
+- `pixie-inference/icon-filter/obj/*_recon.obj`：原始官方单图输出；
+- `cases/<sample>/pixie_image_prior.obj`：映射到评测坐标后的输出；
+- `cases/<sample>/prepared_normal.png`：Prepared 路线与真值的法向对比；
+- `cases/<sample>/pixie_normal.png`：PIXIE 路线与真值的法向对比；
+- `cases/<sample>/paired_metrics.json`：逐例指标、坐标记录和错误信息；
+- `paired_summary.csv`：成对结果总表。
 
-- 数据集先验换成图片估计先验后，平均、中位数和最差 10% 分别退化多少；
-- 退化主要来自姿态、相机对齐、背面法向还是衣服几何；
-- ICON 的反馈优化挽回了多少误差；
-- 哪些样本即使人体先验准确，重建仍然失败。
-
-这会把“复现一篇论文”推进为一个可以产生后续研究问题的评测工作：找到
-系统性能的真正瓶颈，再决定创新应该做在 HPS、反馈优化、背面推断还是
-隐式表面重建上。
-
+两例全部成功后才能进入 30 例。两例出现失败时，先看 `error_type`、
+`error_message` 和对应 trace，不要通过自动对齐把错误藏起来。

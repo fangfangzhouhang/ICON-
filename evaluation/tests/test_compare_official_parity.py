@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from evaluation.compare_official_parity import build_report, write_outputs
+from evaluation.compare_official_parity import build_report, load_official, write_outputs
 
 
 class OfficialParityTest(unittest.TestCase):
@@ -101,6 +101,17 @@ class OfficialParityTest(unittest.TestCase):
             report = build_report(self.args(root, official_path, csv_path))
             self.assertEqual(report["verdict"], "FAIL")
             self.assertFalse(report["contract"]["checks"]["case_count_450"])
+
+    def test_official_loader_accepts_torch_scalar_when_available(self):
+        try:
+            import torch
+        except ImportError:
+            self.skipTest("torch is not installed in the local test environment")
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "torch-results.npy"
+            np.save(path, {"cape-easy-chamfer": torch.tensor(0.8)}, allow_pickle=True)
+            loaded = load_official(path)
+            self.assertAlmostEqual(loaded["cape-easy-chamfer"], 0.8, places=6)
 
 
 if __name__ == "__main__":
