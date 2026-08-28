@@ -1,5 +1,9 @@
 # ICON evaluation: first validate the ruler
 
+全组跨论文复用的协议、统一 CSV、适配器、校验器与比较流程见
+[`UNIFIED_EVALUATION.zh-CN.md`](UNIFIED_EVALUATION.zh-CN.md)。原有 ICON/CAPE
+代码继续作为已经校准的指标内核；统一层不会修改网络或重新定义指标。
+
 This directory adds an auditable evaluation layer without changing ICON's
 network, checkpoints, inference entry point, or licensed assets.
 

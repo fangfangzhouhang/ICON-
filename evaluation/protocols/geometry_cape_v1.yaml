@@ -1,0 +1,54 @@
+protocol_id: geometry-cape-v1
+schema_version: geometry-reconstruction-v1
+research_question: >-
+  How accurately does a method reconstruct clothed-human geometry when every
+  method receives the same CAPE case and is evaluated in the same coordinate frame?
+
+benchmark:
+  name: CAPE
+  license: licensed-research-data
+  full_contract:
+    base_cases: 150
+    rotations: [0, 120, 240]
+    cases: 450
+
+input_contract:
+  same_case_manifest: required
+  prediction_and_gt_same_coordinate_frame: required
+  silent_icp_alignment: forbidden
+  silent_rescaling: forbidden
+
+metrics:
+  chamfer_cm:
+    direction: lower_is_better
+    definition: mean_of_bidirectional_point_to_surface_distance
+    unit: centimetre
+  p2s_cm:
+    direction: lower_is_better
+    definition: ground_truth_surface_samples_to_prediction_surface
+    unit: centimetre
+  normal_error:
+    direction: lower_is_better
+    definition: official_ICON_four_view_squared_normal_difference
+    unit: unitless
+
+sampling:
+  surface_samples: 1000
+  seed: 42
+  implementation: PyTorch3D
+
+failure_policy:
+  keep_in_denominator: true
+  silent_drop: forbidden
+  required_statuses: [ok, failed, skipped]
+
+reporting:
+  required_aggregates: [count, success_rate, mean, median, p90]
+  required_system_metrics: [runtime_seconds, peak_memory_allocated_gib]
+  composite_score: forbidden
+  paired_deltas_on_matched_cases: required_for_method_comparison
+
+validity_boundary: >-
+  This protocol measures geometry on CAPE. It does not by itself evaluate
+  texture, animation, perceptual realism, or reproduce a paper table unless
+  the paper's complete split and preprocessing contract are also matched.

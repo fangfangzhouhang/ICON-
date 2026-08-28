@@ -1,0 +1,21 @@
+protocol_id: prior-robustness-v1
+kind: claim_specific_addon
+depends_on: geometry-cape-v1
+research_question: >-
+  How much does reconstruction quality change when the body prior comes from
+  the image estimator instead of CAPE-prepared body parameters?
+paired_routes:
+  prepared_prior: CAPE-provided SMPL parameters
+  estimated_prior: PIXIE estimation from the same rendered image
+controls:
+  same_image: required
+  same_checkpoint: required
+  same_geometry_metrics: required
+  same_case_and_rotation: required
+reporting:
+  paired_delta: estimated_prior_minus_prepared_prior
+  lower_is_better_metrics: [chamfer_cm, p2s_cm, normal_error]
+  failure_rate: required
+validity_boundary: >-
+  This is a robustness experiment, not a replacement for the official CAPE
+  benchmark and not evidence that every competing method uses the same prior.
